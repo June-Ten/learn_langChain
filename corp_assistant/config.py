@@ -29,7 +29,7 @@ def get_settings() -> Settings:
         mysql_host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         mysql_port=int(os.getenv("MYSQL_PORT", "3306")),
         mysql_user=os.getenv("MYSQL_USER", "root"),
-        mysql_password=os.getenv("MYSQL_PASSWORD", os.getenv("MYSQL_ROOT_PASSWORD", "root123456")),
+        mysql_password=os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQL_ROOT_PASSWORD") or "",
         mysql_database=os.getenv("MYSQL_DATABASE", "langchain"),
         log_level=os.getenv("CORP_LOG_LEVEL", "INFO"),
         rate_limit_per_minute=int(os.getenv("CORP_RATE_LIMIT", "60")),

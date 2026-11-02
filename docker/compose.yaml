@@ -1,6 +1,6 @@
 # 本地开发用 MySQL
-# 用法（在仓库根目录）：docker compose -f docker/compose.yaml up -d
-# 注意：.env 已在 .gitignore 中，密码不要写进本文件
+# 用法（在仓库根目录）：docker compose --env-file .env -f docker/compose.yaml up -d
+# 密码只放在 .env。MYSQL_ROOT_PASSWORD 只在数据卷第一次初始化时生效。
 
 name: learn-langchain
 
@@ -10,7 +10,7 @@ services:
     container_name: langchain-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在仓库根目录的 .env 中设置 MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-langchain}
       TZ: Asia/Shanghai
     ports:
@@ -24,7 +24,7 @@ services:
       # 仅当数据卷为空时才会执行其中的 *.sql
       - ./init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root123456}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
       interval: 10s
       timeout: 5s
       retries: 10
