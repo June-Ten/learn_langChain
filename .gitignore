@@ -29,6 +29,10 @@ htmlcov/
 .tox/
 .nox/
 
+# App data
+data/
+*.db
+
 # IDE / OS
 .idea/
 .vscode/

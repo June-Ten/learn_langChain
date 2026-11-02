@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>星澜内部助手</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f1ec;
+      --card: #fffcf7;
+      --ink: #1d1b17;
+      --muted: #6d675e;
+      --line: #e3ddd2;
+      --accent: #1e5c45;
+      --accent-ink: #f4fbf7;
+      --user: #e5f2eb;
+      --danger: #8d2e2e;
+      --shadow: 0 1px 0 rgba(29, 27, 23, 0.04);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      display: flex;
+      gap: 16px;
+      align-items: end;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: var(--card);
+      border-bottom: 1px solid var(--line);
+    }
+    h1 { margin: 0; font-size: 18px; font-weight: 650; }
+    .sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    .who { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+    input, select, textarea, button { font: inherit; }
+    input, select, textarea {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    textarea { width: 100%; resize: vertical; min-height: 72px; }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      cursor: pointer;
+    }
+    button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+      gap: 16px;
+      padding: 16px 20px 28px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .pad { padding: 14px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > input, .row > select { flex: 1; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .tabs button { background: transparent; color: var(--muted); border: 1px solid transparent; }
+    .tabs button.active { color: var(--accent); border-color: var(--line); background: #f7f3ea; }
+    .log {
+      height: 420px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 4px;
+    }
+    .bubble { max-width: 92%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; line-height: 1.5; }
+    .bubble.user { align-self: flex-end; background: var(--user); }
+    .bubble.assistant { align-self: flex-start; background: #f7f4ee; border: 1px solid var(--line); }
+    .tools { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .error { color: var(--danger); font-size: 13px; min-height: 1.2em; }
+    .hit, .ticket, .person {
+      border-top: 1px solid var(--line);
+      padding: 10px 0;
+    }
+    .hit h3, .ticket h3, .person strong { margin: 0 0 4px; font-size: 14px; }
+    .meta { color: var(--muted); font-size: 12px; }
+    .stack { display: grid; gap: 8px; }
+    .hidden { display: none; }
+    @media (max-width: 860px) {
+      header, .who { align-items: stretch; }
+      header { flex-direction: column; }
+      main { grid-template-columns: 1fr; }
+      .log { height: 320px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>星澜内部助手</h1>
+      <p class="sub" id="identity">正在确认身份…</p>
+    </div>
+    <div class="who">
+      <label>API Key
+        <input id="apiKey" value="dev-key" autocomplete="off">
+      </label>
+      <label>当前员工
+        <select id="userId">
+          <option value="E004" selected>E004 赵敏 · IT 员工</option>
+          <option value="E003">E003 张伟 · 财务员工</option>
+          <option value="E005">E005 陈静 · 财务主管</option>
+          <option value="E002">E002 王芳 · 人力主管</option>
+          <option value="E001">E001 李明 · 管理员</option>
+        </select>
+      </label>
+    </div>
+  </header>
+  <main>
+    <section class="pad">
+      <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+        <strong>对话</strong>
+        <button class="ghost" id="newChat" type="button">新对话</button>
+      </div>
+      <div class="log" id="log"></div>
+      <p class="error" id="chatError"></p>
+      <form id="chatForm" class="stack">
+        <textarea id="message" placeholder="例如：年假有几天？先查制度再回答。" required></textarea>
+        <div class="row">
+          <button id="send" type="submit">发送</button>
+          <span class="meta" id="conv"></span>
+        </div>
+      </form>
+    </section>
+    <section class="pad">
+      <div class="tabs">
+        <button type="button" class="active" data-tab="knowledge">制度</button>
+        <button type="button" data-tab="tickets">工单</button>
+        <button type="button" data-tab="people">同事</button>
+      </div>
+      <div id="knowledge">
+        <form id="searchForm" class="row">
+          <input id="query" placeholder="年假、报销、VPN" required>
+          <button type="submit">检索</button>
+        </form>
+        <p class="error" id="searchError"></p>
+        <div id="hits"></div>
+      </div>
+      <div id="tickets" class="hidden">
+        <form id="ticketForm" class="stack">
+          <input id="title" placeholder="标题" required maxlength="80">
+          <textarea id="description" placeholder="说明" required></textarea>
+          <div class="row">
+            <select id="category">
+              <option value="it">IT</option>
+              <option value="hr">人事</option>
+              <option value="finance">财务</option>
+              <option value="other">其他</option>
+            </select>
+            <select id="priority">
+              <option value="low">低</option>
+              <option value="medium" selected>中</option>
+              <option value="high">高</option>
+            </select>
+            <button type="submit">提交</button>
+          </div>
+        </form>
+        <p class="error" id="ticketError"></p>
+        <div id="ticketList"></div>
+      </div>
+      <div id="people" class="hidden">
+        <form id="peopleForm" class="row">
+          <input id="personQuery" placeholder="姓名或工号">
+          <button type="submit">查找</button>
+        </form>
+        <p class="error" id="peopleError"></p>
+        <div id="personList"></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let conversationId = "";
+    let role = "employee";
+
+    function saveIdentity() {
+      localStorage.setItem("corp_api_key", $("apiKey").value.trim());
+      localStorage.setItem("corp_user_id", $("userId").value);
+    }
+
+    function loadIdentity() {
+      const key = localStorage.getItem("corp_api_key");
+      const user = localStorage.getItem("corp_user_id");
+      if (key) $("apiKey").value = key;
+      if (user) $("userId").value = user;
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        method: options.method || "GET",
+        headers: {
+          "X-API-Key": $("apiKey").value.trim(),
+          "X-User-Id": $("userId").value,
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : "请求失败";
+        throw new Error(detail);
+      }
+      return data;
+    }
+
+    function appendBubble(kind, text, tools) {
+      const node = document.createElement("div");
+      node.className = "bubble " + kind;
+      node.textContent = text;
+      if (tools && tools.length) {
+        const meta = document.createElement("div");
+        meta.className = "tools";
+        meta.textContent = "调用了 " + tools.map((item) => item.name).join("、");
+        node.appendChild(meta);
+      }
+      $("log").appendChild(node);
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+
+    async function refreshMe() {
+      saveIdentity();
+      try {
+        const me = await api("/api/v1/me");
+        role = me.role;
+        $("identity").textContent = me.name + " · " + me.department + " · " + me.title + " · " + me.role;
+      } catch (error) {
+        role = "employee";
+        $("identity").textContent = error.message;
+      }
+    }
+
+    async function refreshTickets() {
+      $("ticketError").textContent = "";
+      try {
+        const page = await api("/api/v1/tickets");
+        const box = $("ticketList");
+        box.replaceChildren();
+        if (!page.items.length) {
+          box.textContent = "当前身份下没有工单。";
+          return;
+        }
+        for (const ticket of page.items) {
+          const card = document.createElement("article");
+          card.className = "ticket";
+          const title = document.createElement("h3");
+          title.textContent = "#" + ticket.id + " " + ticket.title;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = ticket.status + " · " + ticket.category + "/" + ticket.priority + " · " + ticket.requester_name;
+          card.append(title, meta);
+          if (role === "manager" || role === "admin") {
+            const select = document.createElement("select");
+            for (const status of ["open", "in_progress", "resolved"]) {
+              const option = document.createElement("option");
+              option.value = status;
+              option.textContent = status;
+              option.selected = status === ticket.status;
+              select.appendChild(option);
+            }
+            select.addEventListener("change", async () => {
+              try {
+                await api("/api/v1/tickets/" + ticket.id, {
+                  method: "PATCH",
+                  body: { status: select.value },
+                });
+                await refreshTickets();
+              } catch (error) {
+                $("ticketError").textContent = error.message;
+              }
+            });
+            card.appendChild(select);
+          }
+          box.appendChild(card);
+        }
+      } catch (error) {
+        $("ticketError").textContent = error.message;
+      }
+    }
+
+    async function refreshPeople(query) {
+      $("peopleError").textContent = "";
+      try {
+        const page = await api("/api/v1/employees?q=" + encodeURIComponent(query || ""));
+        const box = $("personList");
+        box.replaceChildren();
+        for (const person of page.items) {
+          const card = document.createElement("article");
+          card.className = "person";
+          const name = document.createElement("strong");
+          name.textContent = person.id + " " + person.name;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = person.department + " · " + person.title + " · " + person.role;
+          card.append(name, meta);
+          box.appendChild(card);
+        }
+      } catch (error) {
+        $("peopleError").textContent = error.message;
+      }
+    }
+
+    $("apiKey").addEventListener("change", async () => {
+      conversationId = "";
+      $("conv").textContent = "";
+      $("log").replaceChildren();
+      await refreshMe();
+      await refreshTickets();
+    });
+    $("userId").addEventListener("change", async () => {
+      conversationId = "";
+      $("conv").textContent = "";
+      $("log").replaceChildren();
+      await refreshMe();
+      await refreshTickets();
+      await refreshPeople($("personQuery").value.trim());
+    });
+
+    document.querySelectorAll(".tabs button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        for (const name of ["knowledge", "tickets", "people"]) {
+          $(name).classList.toggle("hidden", name !== button.dataset.tab);
+        }
+        if (button.dataset.tab === "tickets") refreshTickets();
+        if (button.dataset.tab === "people") refreshPeople($("personQuery").value.trim());
+      });
+    });
+
+    $("newChat").addEventListener("click", () => {
+      conversationId = "";
+      $("conv").textContent = "";
+      $("log").replaceChildren();
+      $("chatError").textContent = "";
+    });
+
+    $("chatForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = $("message").value.trim();
+      if (!message) return;
+      $("chatError").textContent = "";
+      $("send").disabled = true;
+      appendBubble("user", message);
+      $("message").value = "";
+      try {
+        const result = await api("/api/v1/chat", {
+          method: "POST",
+          body: { message, conversation_id: conversationId || null },
+        });
+        conversationId = result.conversation_id;
+        $("conv").textContent = "会话 " + conversationId.slice(0, 8);
+        appendBubble("assistant", result.answer, result.tools);
+      } catch (error) {
+        $("chatError").textContent = error.message;
+      } finally {
+        $("send").disabled = false;
+      }
+    });
+
+    $("searchForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      $("searchError").textContent = "";
+      try {
+        const page = await api("/api/v1/knowledge/search?q=" + encodeURIComponent($("query").value.trim()));
+        const box = $("hits");
+        box.replaceChildren();
+        if (!page.items.length) {
+          box.textContent = "没有命中。";
+          return;
+        }
+        for (const hit of page.items) {
+          const card = document.createElement("article");
+          card.className = "hit";
+          const title = document.createElement("h3");
+          title.textContent = hit.title;
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = hit.source + " · 分数 " + hit.score;
+          const body = document.createElement("div");
+          body.textContent = hit.content;
+          card.append(title, meta, body);
+          box.appendChild(card);
+        }
+      } catch (error) {
+        $("searchError").textContent = error.message;
+      }
+    });
+
+    $("ticketForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      $("ticketError").textContent = "";
+      try {
+        await api("/api/v1/tickets", {
+          method: "POST",
+          body: {
+            title: $("title").value.trim(),
+            description: $("description").value.trim(),
+            category: $("category").value,
+            priority: $("priority").value,
+          },
+        });
+        $("ticketForm").reset();
+        $("priority").value = "medium";
+        await refreshTickets();
+      } catch (error) {
+        $("ticketError").textContent = error.message;
+      }
+    });
+
+    $("peopleForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await refreshPeople($("personQuery").value.trim());
+    });
+
+    loadIdentity();
+    refreshMe();
+  </script>
+</body>
+</html>
