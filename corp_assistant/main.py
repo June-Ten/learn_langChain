@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from sqlalchemy import text
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -86,7 +87,7 @@ def create_app() -> FastAPI:
     def ready():
         try:
             with store.get_conn() as conn:
-                conn.execute("SELECT 1").fetchone()
+                conn.execute(text("SELECT 1")).fetchone()
         except Exception as exc:
             raise AppError(503, f"数据库不可用: {exc}") from exc
         return {"status": "ready"}

@@ -3,8 +3,23 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 
-import pymysql
-from pymysql.cursors import DictCursor
+from sqlalchemy import (
+    Column,
+    ForeignKey,
+    MetaData,
+    String,
+    Table,
+    Text,
+    and_,
+    create_engine,
+    func,
+    or_,
+    select,
+    text,
+    update,
+)
+from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy.engine import Engine, URL
 
 from corp_assistant.config import get_settings
 from corp_assistant.errors import AppError
@@ -13,70 +28,90 @@ CATEGORIES = {"it", "hr", "finance", "other"}
 PRIORITIES = {"low", "medium", "high"}
 STATUSES = {"open", "in_progress", "resolved"}
 
-SCHEMA = [
-    """
-    CREATE TABLE IF NOT EXISTS employees (
-        id VARCHAR(16) PRIMARY KEY,
-        name VARCHAR(64) NOT NULL,
-        department VARCHAR(64) NOT NULL,
-        title VARCHAR(64) NOT NULL,
-        email VARCHAR(128) NOT NULL,
-        role VARCHAR(16) NOT NULL,
-        manager_id VARCHAR(16) NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS tickets (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(80) NOT NULL,
-        description TEXT NOT NULL,
-        category VARCHAR(16) NOT NULL,
-        priority VARCHAR(16) NOT NULL,
-        status VARCHAR(16) NOT NULL,
-        requester_id VARCHAR(16) NOT NULL,
-        created_at VARCHAR(40) NOT NULL,
-        CONSTRAINT fk_ticket_employee FOREIGN KEY (requester_id) REFERENCES employees (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS conversations (
-        id VARCHAR(32) PRIMARY KEY,
-        user_id VARCHAR(16) NOT NULL,
-        title VARCHAR(40) NOT NULL,
-        created_at VARCHAR(40) NOT NULL,
-        CONSTRAINT fk_conversation_employee FOREIGN KEY (user_id) REFERENCES employees (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS messages (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        conversation_id VARCHAR(32) NOT NULL,
-        role VARCHAR(16) NOT NULL,
-        content TEXT NOT NULL,
-        created_at VARCHAR(40) NOT NULL,
-        CONSTRAINT fk_message_conversation FOREIGN KEY (conversation_id) REFERENCES conversations (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS audit_logs (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        actor_id VARCHAR(16) NOT NULL,
-        action VARCHAR(64) NOT NULL,
-        resource VARCHAR(64) NOT NULL,
-        detail VARCHAR(500) NOT NULL,
-        created_at VARCHAR(40) NOT NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS knowledge_notes (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        title VARCHAR(80) NOT NULL,
-        body TEXT NOT NULL,
-        author_id VARCHAR(16) NOT NULL,
-        created_at VARCHAR(40) NOT NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """,
-]
+metadata = MetaData()
+
+employees = Table(
+    "employees",
+    metadata,
+    Column("id", String(16), primary_key=True),
+    Column("name", String(64), nullable=False),
+    Column("department", String(64), nullable=False),
+    Column("title", String(64), nullable=False),
+    Column("email", String(128), nullable=False),
+    Column("role", String(16), nullable=False),
+    Column("manager_id", String(16)),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
+
+tickets = Table(
+    "tickets",
+    metadata,
+    Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
+    Column("title", String(80), nullable=False),
+    Column("description", Text, nullable=False),
+    Column("category", String(16), nullable=False),
+    Column("priority", String(16), nullable=False),
+    Column("status", String(16), nullable=False),
+    Column("requester_id", String(16), ForeignKey("employees.id"), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
+
+conversations = Table(
+    "conversations",
+    metadata,
+    Column("id", String(32), primary_key=True),
+    Column("user_id", String(16), ForeignKey("employees.id"), nullable=False),
+    Column("title", String(40), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
+
+messages = Table(
+    "messages",
+    metadata,
+    Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
+    Column("conversation_id", String(32), ForeignKey("conversations.id"), nullable=False),
+    Column("role", String(16), nullable=False),
+    Column("content", Text, nullable=False),
+    Column("created_at", String(40), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
+
+audit_logs = Table(
+    "audit_logs",
+    metadata,
+    Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
+    Column("actor_id", String(16), nullable=False),
+    Column("action", String(64), nullable=False),
+    Column("resource", String(64), nullable=False),
+    Column("detail", String(500), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
+
+knowledge_notes = Table(
+    "knowledge_notes",
+    metadata,
+    Column("id", BIGINT(unsigned=True), primary_key=True, autoincrement=True),
+    Column("title", String(80), nullable=False),
+    Column("body", Text, nullable=False),
+    Column("author_id", String(16), nullable=False),
+    Column("created_at", String(40), nullable=False),
+    mysql_engine="InnoDB",
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_0900_ai_ci",
+)
 
 EMPLOYEES = [
     ("E001", "李明", "信息技术部", "技术负责人", "liming@xinglan.example", "admin", None),
@@ -86,66 +121,52 @@ EMPLOYEES = [
     ("E005", "陈静", "财务部", "财务经理", "chenjing@xinglan.example", "manager", "E001"),
 ]
 
-TICKET_FROM = "FROM tickets t JOIN employees e ON e.id = t.requester_id"
-TICKET_SELECT = f"""
-SELECT t.id, t.title, t.description, t.category, t.priority, t.status,
-       t.requester_id, t.created_at,
-       e.name AS requester_name, e.department AS requester_department
-{TICKET_FROM}
-"""
+_TICKET_FROM = tickets.join(employees, employees.c.id == tickets.c.requester_id)
+_TICKET_SELECT = select(
+    tickets.c.id,
+    tickets.c.title,
+    tickets.c.description,
+    tickets.c.category,
+    tickets.c.priority,
+    tickets.c.status,
+    tickets.c.requester_id,
+    tickets.c.created_at,
+    employees.c.name.label("requester_name"),
+    employees.c.department.label("requester_department"),
+).select_from(_TICKET_FROM)
+
+_engines: dict[str, Engine] = {}
 
 
 def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-class _Row(dict):
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return list(self.values())[key]
-        return dict.__getitem__(self, key)
-
-
-class _Result:
-    def __init__(self, cursor):
-        self.lastrowid = cursor.lastrowid
-        self._cursor = cursor
-
-    def fetchone(self):
-        row = self._cursor.fetchone()
-        return _Row(row) if row else None
-
-    def fetchall(self):
-        return [_Row(row) for row in self._cursor.fetchall()]
-
-
-class _Conn:
-    def __init__(self, raw: pymysql.Connection):
-        self.raw = raw
-
-    def execute(self, sql: str, params: tuple | list | None = None):
-        cursor = self.raw.cursor()
-        cursor.execute(sql, params or ())
-        return _Result(cursor)
-
-    def executemany(self, sql: str, seq):
-        cursor = self.raw.cursor()
-        cursor.executemany(sql, seq)
-        return _Result(cursor)
-
-
-def _connect(database: str | None) -> pymysql.Connection:
+def _database_url(database: str | None) -> URL:
     settings = get_settings()
-    return pymysql.connect(
+    return URL.create(
+        "mysql+pymysql",
+        username=settings.mysql_user,
+        password=settings.mysql_password,
         host=settings.mysql_host,
         port=settings.mysql_port,
-        user=settings.mysql_user,
-        password=settings.mysql_password,
         database=database,
-        charset="utf8mb4",
-        cursorclass=DictCursor,
-        autocommit=False,
+        query={"charset": "utf8mb4"},
     )
+
+
+def _engine_for(database: str | None) -> Engine:
+    url = _database_url(database)
+    key = url.render_as_string(hide_password=False)
+    engine = _engines.get(key)
+    if engine is None:
+        engine = create_engine(url, pool_pre_ping=True, pool_recycle=3600)
+        _engines[key] = engine
+    return engine
+
+
+def get_engine() -> Engine:
+    return _engine_for(get_settings().mysql_database)
 
 
 def _ensure_database() -> None:
@@ -153,94 +174,106 @@ def _ensure_database() -> None:
     name = settings.mysql_database
     if not re.fullmatch(r"[A-Za-z0-9_]+", name):
         raise AppError(500, "MySQL 库名只能包含字母、数字和下划线")
-    conn = _connect(None)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+    with _engine_for(None).begin() as conn:
+        conn.execute(
+            text(
+                f"CREATE DATABASE IF NOT EXISTS `{name}` "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
             )
-        conn.commit()
-    finally:
-        conn.close()
+        )
 
 
 @contextmanager
 def get_conn():
-    raw = _connect(get_settings().mysql_database)
-    try:
-        yield _Conn(raw)
-        raw.commit()
-    except Exception:
-        raw.rollback()
-        raise
-    finally:
-        raw.close()
+    with get_engine().begin() as conn:
+        yield conn
+
+
+def _rows(conn, stmt) -> list[dict]:
+    return [dict(row) for row in conn.execute(stmt).mappings().all()]
+
+
+def _first(conn, stmt) -> dict | None:
+    row = conn.execute(stmt).mappings().first()
+    return dict(row) if row else None
 
 
 def init_db() -> None:
     _ensure_database()
-    with get_conn() as conn:
-        for statement in SCHEMA:
-            conn.execute(statement)
+    metadata.create_all(get_engine())
 
 
 def seed() -> None:
     with get_conn() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
+        count = conn.execute(select(func.count()).select_from(employees)).scalar_one()
         if count:
             return
-        conn.executemany(
-            """
-            INSERT INTO employees (id, name, department, title, email, role, manager_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            EMPLOYEES,
+        conn.execute(
+            employees.insert(),
+            [
+                {
+                    "id": item[0],
+                    "name": item[1],
+                    "department": item[2],
+                    "title": item[3],
+                    "email": item[4],
+                    "role": item[5],
+                    "manager_id": item[6],
+                }
+                for item in EMPLOYEES
+            ],
         )
 
 
 def add_audit(actor_id: str, action: str, resource: str, detail: str) -> None:
     with get_conn() as conn:
         conn.execute(
-            """
-            INSERT INTO audit_logs (actor_id, action, resource, detail, created_at)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (actor_id, action, resource, detail[:500], now()),
+            audit_logs.insert().values(
+                actor_id=actor_id,
+                action=action,
+                resource=resource,
+                detail=detail[:500],
+                created_at=now(),
+            )
         )
 
 
 def get_employee(employee_id: str) -> dict | None:
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM employees WHERE id = %s", (employee_id,)).fetchone()
-    return dict(row) if row else None
+        return _first(conn, select(employees).where(employees.c.id == employee_id))
 
 
 def list_employees(q: str, department: str, limit: int, offset: int) -> tuple[list[dict], int]:
-    clauses: list[str] = []
-    params: list[str] = []
+    filters = []
     if q:
-        clauses.append("(name LIKE %s OR id LIKE %s OR title LIKE %s)")
         like = f"%{q}%"
-        params.extend([like, like, like])
+        filters.append(
+            or_(
+                employees.c.name.like(like),
+                employees.c.id.like(like),
+                employees.c.title.like(like),
+            )
+        )
     if department:
-        clauses.append("department = %s")
-        params.append(department)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        filters.append(employees.c.department == department)
+    stmt = select(employees)
+    count_stmt = select(func.count()).select_from(employees)
+    if filters:
+        condition = and_(*filters)
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
     with get_conn() as conn:
-        total = conn.execute(f"SELECT COUNT(*) FROM employees{where}", params).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT * FROM employees{where} ORDER BY id LIMIT %s OFFSET %s",
-            [*params, limit, offset],
-        ).fetchall()
-    return [dict(row) for row in rows], total
+        total = int(conn.execute(count_stmt).scalar_one())
+        rows = _rows(conn, stmt.order_by(employees.c.id).limit(limit).offset(offset))
+    return rows, total
 
 
 def list_departments() -> list[str]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT department FROM employees ORDER BY department"
-        ).fetchall()
-    return [row[0] for row in rows]
+            select(employees.c.department).distinct().order_by(employees.c.department)
+        ).scalars()
+        return list(rows)
 
 
 def can_view_ticket(user: dict, ticket: dict) -> bool:
@@ -253,32 +286,29 @@ def can_view_ticket(user: dict, ticket: dict) -> bool:
 
 def get_ticket(ticket_id: int) -> dict | None:
     with get_conn() as conn:
-        row = conn.execute(TICKET_SELECT + " WHERE t.id = %s", (ticket_id,)).fetchone()
-    return dict(row) if row else None
+        return _first(conn, _TICKET_SELECT.where(tickets.c.id == ticket_id))
 
 
 def list_tickets(user: dict, status: str, limit: int, offset: int) -> tuple[list[dict], int]:
-    clauses: list[str] = []
-    params: list[str | int] = []
+    filters = []
     if user["role"] == "employee":
-        clauses.append("t.requester_id = %s")
-        params.append(user["id"])
+        filters.append(tickets.c.requester_id == user["id"])
     elif user["role"] == "manager":
-        clauses.append("e.department = %s")
-        params.append(user["department"])
+        filters.append(employees.c.department == user["department"])
     if status:
         if status not in STATUSES:
             raise AppError(400, "status 只能是 open、in_progress、resolved")
-        clauses.append("t.status = %s")
-        params.append(status)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        filters.append(tickets.c.status == status)
+    stmt = _TICKET_SELECT
+    count_stmt = select(func.count()).select_from(_TICKET_FROM)
+    if filters:
+        condition = and_(*filters)
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
     with get_conn() as conn:
-        total = conn.execute(f"SELECT COUNT(*) {TICKET_FROM}{where}", params).fetchone()[0]
-        rows = conn.execute(
-            TICKET_SELECT + where + " ORDER BY t.id DESC LIMIT %s OFFSET %s",
-            [*params, limit, offset],
-        ).fetchall()
-    return [dict(row) for row in rows], total
+        total = int(conn.execute(count_stmt).scalar_one())
+        rows = _rows(conn, stmt.order_by(tickets.c.id.desc()).limit(limit).offset(offset))
+    return rows, total
 
 
 def create_ticket(
@@ -293,15 +323,18 @@ def create_ticket(
     if priority not in PRIORITIES:
         raise AppError(400, "priority 只能是 low、medium、high")
     with get_conn() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO tickets
-                (title, description, category, priority, status, requester_id, created_at)
-            VALUES (%s, %s, %s, %s, 'open', %s, %s)
-            """,
-            (title.strip(), description.strip(), category, priority, requester_id, now()),
+        result = conn.execute(
+            tickets.insert().values(
+                title=title.strip(),
+                description=description.strip(),
+                category=category,
+                priority=priority,
+                status="open",
+                requester_id=requester_id,
+                created_at=now(),
+            )
         )
-        ticket_id = int(cursor.lastrowid)
+        ticket_id = int(result.inserted_primary_key[0])
     add_audit(requester_id, "ticket.create", str(ticket_id), title.strip())
     ticket = get_ticket(ticket_id)
     if ticket is None:
@@ -318,7 +351,7 @@ def update_ticket_status(user: dict, ticket_id: int, status: str) -> dict:
     if ticket is None or not can_view_ticket(user, ticket):
         raise AppError(404, "工单不存在")
     with get_conn() as conn:
-        conn.execute("UPDATE tickets SET status = %s WHERE id = %s", (status, ticket_id))
+        conn.execute(update(tickets).where(tickets.c.id == ticket_id).values(status=status))
     add_audit(user["id"], "ticket.update", str(ticket_id), status)
     updated = get_ticket(ticket_id)
     if updated is None:
@@ -330,22 +363,19 @@ def create_conversation(user_id: str, title: str) -> str:
     conversation_id = uuid.uuid4().hex
     with get_conn() as conn:
         conn.execute(
-            """
-            INSERT INTO conversations (id, user_id, title, created_at)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (conversation_id, user_id, title[:40] or "新会话", now()),
+            conversations.insert().values(
+                id=conversation_id,
+                user_id=user_id,
+                title=title[:40] or "新会话",
+                created_at=now(),
+            )
         )
     return conversation_id
 
 
 def get_conversation(conversation_id: str) -> dict | None:
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM conversations WHERE id = %s",
-            (conversation_id,),
-        ).fetchone()
-    return dict(row) if row else None
+        return _first(conn, select(conversations).where(conversations.c.id == conversation_id))
 
 
 def require_conversation(user: dict, conversation_id: str) -> dict:
@@ -358,65 +388,66 @@ def require_conversation(user: dict, conversation_id: str) -> dict:
 
 
 def list_conversations(user: dict, limit: int, offset: int) -> tuple[list[dict], int]:
-    clauses: list[str] = []
-    params: list[str | int] = []
+    stmt = select(conversations)
+    count_stmt = select(func.count()).select_from(conversations)
     if user["role"] != "admin":
-        clauses.append("user_id = %s")
-        params.append(user["id"])
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        condition = conversations.c.user_id == user["id"]
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
     with get_conn() as conn:
-        total = conn.execute(f"SELECT COUNT(*) FROM conversations{where}", params).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT * FROM conversations{where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
-            [*params, limit, offset],
-        ).fetchall()
-    return [dict(row) for row in rows], total
+        total = int(conn.execute(count_stmt).scalar_one())
+        rows = _rows(
+            conn,
+            stmt.order_by(conversations.c.created_at.desc()).limit(limit).offset(offset),
+        )
+    return rows, total
 
 
 def add_message(conversation_id: str, role: str, content: str) -> None:
     with get_conn() as conn:
         conn.execute(
-            """
-            INSERT INTO messages (conversation_id, role, content, created_at)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (conversation_id, role, content, now()),
+            messages.insert().values(
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+                created_at=now(),
+            )
         )
 
 
 def recent_messages(conversation_id: str, limit: int = 8) -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM messages
-            WHERE conversation_id = %s
-            ORDER BY id DESC
-            LIMIT %s
-            """,
-            (conversation_id, limit),
-        ).fetchall()
-    return [dict(row) for row in reversed(rows)]
+        rows = _rows(
+            conn,
+            select(messages)
+            .where(messages.c.conversation_id == conversation_id)
+            .order_by(messages.c.id.desc())
+            .limit(limit),
+        )
+    return list(reversed(rows))
 
 
 def list_messages(conversation_id: str) -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM messages WHERE conversation_id = %s ORDER BY id",
-            (conversation_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+        return _rows(
+            conn,
+            select(messages)
+            .where(messages.c.conversation_id == conversation_id)
+            .order_by(messages.c.id),
+        )
 
 
 def add_note(author_id: str, title: str, body: str) -> dict:
     with get_conn() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO knowledge_notes (title, body, author_id, created_at)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (title.strip(), body.strip(), author_id, now()),
+        result = conn.execute(
+            knowledge_notes.insert().values(
+                title=title.strip(),
+                body=body.strip(),
+                author_id=author_id,
+                created_at=now(),
+            )
         )
-        note_id = int(cursor.lastrowid)
+        note_id = int(result.inserted_primary_key[0])
     add_audit(author_id, "note.create", str(note_id), title.strip())
     note = get_note(note_id)
     if note is None:
@@ -426,41 +457,44 @@ def add_note(author_id: str, title: str, body: str) -> dict:
 
 def get_note(note_id: int) -> dict | None:
     with get_conn() as conn:
-        row = conn.execute("SELECT * FROM knowledge_notes WHERE id = %s", (note_id,)).fetchone()
-    return dict(row) if row else None
+        return _first(conn, select(knowledge_notes).where(knowledge_notes.c.id == note_id))
 
 
 def list_notes(limit: int, offset: int) -> tuple[list[dict], int]:
     with get_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM knowledge_notes").fetchone()[0]
-        rows = conn.execute(
-            "SELECT * FROM knowledge_notes ORDER BY id DESC LIMIT %s OFFSET %s",
-            (limit, offset),
-        ).fetchall()
-    return [dict(row) for row in rows], total
+        total = int(conn.execute(select(func.count()).select_from(knowledge_notes)).scalar_one())
+        rows = _rows(
+            conn,
+            select(knowledge_notes).order_by(knowledge_notes.c.id.desc()).limit(limit).offset(offset),
+        )
+    return rows, total
 
 
 def list_audit(limit: int, offset: int) -> tuple[list[dict], int]:
     with get_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM audit_logs").fetchone()[0]
-        rows = conn.execute(
-            "SELECT * FROM audit_logs ORDER BY id DESC LIMIT %s OFFSET %s",
-            (limit, offset),
-        ).fetchall()
-    return [dict(row) for row in rows], total
+        total = int(conn.execute(select(func.count()).select_from(audit_logs)).scalar_one())
+        rows = _rows(
+            conn,
+            select(audit_logs).order_by(audit_logs.c.id.desc()).limit(limit).offset(offset),
+        )
+    return rows, total
 
 
 def counts() -> dict[str, int]:
     with get_conn() as conn:
-        employees = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
-        open_tickets = conn.execute(
-            "SELECT COUNT(*) FROM tickets WHERE status != 'resolved'"
-        ).fetchone()[0]
-        conversations = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
-        notes = conn.execute("SELECT COUNT(*) FROM knowledge_notes").fetchone()[0]
+        employee_count = int(conn.execute(select(func.count()).select_from(employees)).scalar_one())
+        open_tickets = int(
+            conn.execute(
+                select(func.count()).select_from(tickets).where(tickets.c.status != "resolved")
+            ).scalar_one()
+        )
+        conversation_count = int(
+            conn.execute(select(func.count()).select_from(conversations)).scalar_one()
+        )
+        note_count = int(conn.execute(select(func.count()).select_from(knowledge_notes)).scalar_one())
     return {
-        "employees": employees,
+        "employees": employee_count,
         "open_tickets": open_tickets,
-        "conversations": conversations,
-        "knowledge_notes": notes,
+        "conversations": conversation_count,
+        "knowledge_notes": note_count,
     }

@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ def client(monkeypatch):
     reset_rate_limit()
     create_app()
     with store.get_conn() as conn:
-        conn.execute("SET FOREIGN_KEY_CHECKS = 0")
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
         for name in (
             "messages",
             "conversations",
@@ -23,8 +24,8 @@ def client(monkeypatch):
             "knowledge_notes",
             "employees",
         ):
-            conn.execute(f"DELETE FROM {name}")
-        conn.execute("SET FOREIGN_KEY_CHECKS = 1")
+            conn.execute(text(f"DELETE FROM {name}"))
+        conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
     store.seed()
     return TestClient(create_app())
 

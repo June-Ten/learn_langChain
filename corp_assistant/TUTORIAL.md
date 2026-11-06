@@ -11,7 +11,7 @@
 | `main.py` | 启动时建库、装文档、挂中间件和异常处理 |
 | `api.py` | URL 到函数的映射，入参和出参用 Pydantic |
 | `auth.py` | API Key、当前员工、每分钟限流 |
-| `store.py` | MySQL 的表、种子数据和全部 SQL |
+| `store.py` | SQLAlchemy 表、种子数据和查询 |
 | `knowledge.py` | 把 Markdown 切成小段，按关键词打分 |
 | `tools.py` | 给模型看的五个工具 |
 | `assistant.py` | 组 Agent、跑对话、把一句话整理成工单草稿 |
@@ -46,7 +46,7 @@ uvicorn
 `create_app()` 里按这个顺序准备：
 
 1. `setup_logging()` 配置根日志。已经有 handler 时只改级别，避免测试里重复打印。
-2. `store.init_db()` 执行 `CREATE TABLE IF NOT EXISTS`。表已经在就什么都不改。
+2. `store.init_db()` 用 SQLAlchemy 按表定义建表。表已经在就什么都不改。
 3. `store.seed()` 数一下 `employees`。有记录就返回，所以重启不会把李明插进去两次。
 4. `knowledge.load()` 读 `knowledge_docs/*.md`，放进内存列表 `_chunks`。
 5. 创建 FastAPI，挂上 CORS、访问日志、两种异常处理，再 `include_router`。
@@ -84,7 +84,7 @@ uvicorn
 
 ## 数据怎么落库
 
-`store.get_conn()` 是每次操作新开一个 MySQL 连接的上下文管理器。成功就 `commit`，异常就 `rollback`，最后关闭。查询结果按列名收成字典，再交给 Pydantic。
+`store.get_conn()` 从 SQLAlchemy 连接池取出一个连接，包成事务。成功就 `commit`，异常就 `rollback`，连接归还连接池。查询结果按列名收成字典，再交给 Pydantic。PyMySQL 只作为 SQLAlchemy 的 MySQL 驱动。
 
 六张表：
 
@@ -96,7 +96,7 @@ uvicorn
 
 写操作成功后调用 `add_audit`。建工单记 `ticket.create`，改状态记 `ticket.update`，发笔记记 `note.create`，完成一轮对话记 `chat`。审计用的是另一个连接，所以工单已经提交、审计却写失败时，工单仍在。示例里接受这种缝隙。
 
-SQL 的条件全部用 `?` 占位。用户输入进参数列表，不拼进 SQL 字符串。`LIKE` 的百分号是代码自己加的。
+查询用 SQLAlchemy 的 `select`、`insert`、`update` 写。用户输入作为绑定参数，不拼进 SQL 字符串。`LIKE` 的百分号是代码自己加的。
 
 ## 工单为什么有的人看不见
 
