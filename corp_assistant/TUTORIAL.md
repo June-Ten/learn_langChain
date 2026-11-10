@@ -12,7 +12,7 @@
 | `api.py` | URL 到函数的映射，入参和出参用 Pydantic |
 | `auth.py` | API Key、当前员工、每分钟限流 |
 | `store.py` | SQLAlchemy 表、种子数据和查询 |
-| `knowledge.py` | 把 Markdown 切成小段，按关键词打分 |
+| `knowledge.py` | 把 Markdown 切成小段，写入 pgvector，按相似度检索 |
 | `tools.py` | 给模型看的五个工具 |
 | `assistant.py` | 组 Agent、跑对话、把一句话整理成工单草稿 |
 | `context.py` | 用上下文变量把当前工号带进工具 |
@@ -33,11 +33,11 @@ uvicorn
   -> assistant.chat           写入用户这句话，取出最近 8 条
   -> create_agent(...).invoke 模型决定要不要调工具
   -> tools.search_knowledge   模型发出调用后，由框架执行
-  -> knowledge.search         在制度和笔记里打分
+  -> knowledge.search         在 PostgreSQL 里按向量距离取制度，并带上笔记
   -> assistant.chat           把最终回答写回 messages，并记一条审计
 ```
 
-模型自己不查数据库。它只能返回「请调用 `search_knowledge`，参数是年假」。真正打开文件、算分数的是 Python 函数。这和 `lesson03_tool.py` 里手写的循环是同一件事，只是循环交给了 `create_agent`。
+模型自己不查数据库。它只能返回「请调用 `search_knowledge`，参数是年假」。真正查 PostgreSQL、算相似度的是 Python 函数。这和 `lesson03_tool.py` 里手写的循环是同一件事，只是循环交给了 `create_agent`。
 
 ## 启动时做了三件准备
 
@@ -48,10 +48,12 @@ uvicorn
 1. `setup_logging()` 配置根日志。已经有 handler 时只改级别，避免测试里重复打印。
 2. `store.init_db()` 用 SQLAlchemy 按表定义建表。表已经在就什么都不改。
 3. `store.seed()` 数一下 `employees`。有记录就返回，所以重启不会把李明插进去两次。
-4. `knowledge.load()` 读 `knowledge_docs/*.md`，放进内存列表 `_chunks`。
+4. `knowledge.load()` 读 `knowledge_docs/*.md`，把有变化的段落写入 PostgreSQL。
 5. 创建 FastAPI，挂上 CORS、访问日志、两种异常处理，再 `include_router`。
 
-数据库是本机 Docker 里的 MySQL，默认库名 `langchain`。连接参数来自 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`。
+员工、工单和笔记在本机 Docker 里的 MySQL，默认库名 `langchain`。连接参数来自 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`。
+
+制度原文在同一个 compose 文件里的 PostgreSQL，库名默认也是 `langchain`。连接参数来自 `PG_HOST`、`PG_PORT`、`PG_USER`、`PG_PASSWORD`、`PG_DATABASE`。
 
 `/health` 只表示进程活着。`/ready` 会执行 `SELECT 1`，库打不开就返回 503。这两个接口不经过 `current_user`。
 
@@ -92,7 +94,7 @@ uvicorn
 - `tickets`：工单。新建时状态固定是 `open`。
 - `conversations` / `messages`：对话和其中的每一句。
 - `audit_logs`：谁在什么时间做了写操作。
-- `knowledge_notes`：管理员从接口写进去的补充说明。制度原文仍在 Markdown 文件里。
+- `knowledge_notes`：管理员从接口写进去的补充说明。制度原文在 PostgreSQL，不在这张表里。
 
 写操作成功后调用 `add_audit`。建工单记 `ticket.create`，改状态记 `ticket.update`，发笔记记 `note.create`，完成一轮对话记 `chat`。审计用的是另一个连接，所以工单已经提交、审计却写失败时，工单仍在。示例里接受这种缝隙。
 
@@ -114,19 +116,15 @@ uvicorn
 
 `POST /api/v1/tickets` 和工具 `create_ticket` 最后都进 `store.create_ticket`。类别和优先级不在允许集合里就 400。HTTP 这边还会先被 `TicketIn` 挡成 422，因为请求体用了 `Literal`。工具没有这层 Pydantic，所以 `store` 里再查一次。
 
-## 制度检索没有用向量
+## 制度原文存在 PostgreSQL
 
-`knowledge.load()` 按文件读 Markdown，再用正则 `\n(?=## )` 在每个二级标题前切开。`leave.md` 会变成「标题段、年假、病假、事假」几段，每段记住来源文件名。这些段只活在内存里，重启要重新 `load()`。
+`knowledge.load()` 按文件读 Markdown，再用正则 `\n(?=## )` 在每个二级标题前切开。`leave.md` 会变成「标题段、年假、病假、事假」几段，每段记住来源文件名。仓库里的 Markdown 只是种子。段落写入 PostgreSQL 的 `knowledge_chunks`，向量放在 `embedding` 列，类型是 `vector(512)`。
 
-查询时把中文和英文拆开：
+嵌入用本机模型 `BAAI/bge-small-zh-v1.5`，不调用对话模型。第一次运行会下载大约 90MB。段落内容的 SHA-256 没变就跳过，所以重启不会把同一段再算一遍。改完 Markdown 后，重启服务或调用 `POST /api/v1/knowledge/reload` 会把变化写进库里。
 
-- 英文和数字整词匹配，并转成小写。
-- 不超过 4 个字的中文整段去对，所以「年假」能直接命中。
-- 更长的中文切成二字片段。「年假有几天」会得到「年假、假有、有几、几天」，其中「年假」落在正文里。
+查询时把问题嵌成同一个空间里的向量，按余弦距离排序。返回给接口的 `score` 是相似度乘 1000，越接近 1000 越相关。管理员笔记仍从 MySQL 读出，查询时临时嵌一次，和制度段落放进同一个列表。笔记的 `source` 是 `note:3` 这种形式。
 
-分数是命中片段的字数之和。0 分丢掉，剩下按分数取前几条。管理员笔记在查询时从 MySQL 读出来，和文件段落放进同一个列表。笔记的 `source` 是 `note:3` 这种形式。
-
-这里不用嵌入模型，是因为前几课只有对话模型，没有单独的向量接口。关键词够演示「先检索，再让模型根据检索结果回答」。
+PostgreSQL 用官方镜像 `pgvector/pgvector:pg17`，只监听 `127.0.0.1:5432`。相似度索引是 HNSW，操作符类是 `vector_cosine_ops`。
 
 工具把命中结果拼成纯文本。一条都没有时，返回的句子要求模型承认不知道。系统提示里又说了一遍。两处都写，是因为模型有时不看工具结果里的那句交代。
 

@@ -6,6 +6,7 @@ from sqlalchemy import text
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("MYSQL_DATABASE", "langchain_test")
+    monkeypatch.setenv("PG_DATABASE", "langchain_test")
     monkeypatch.setenv("CORP_API_KEYS", "test-key")
     monkeypatch.setenv("CORP_RATE_LIMIT", "0")
     from corp_assistant.auth import reset_rate_limit

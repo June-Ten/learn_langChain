@@ -88,16 +88,20 @@ def create_app() -> FastAPI:
         try:
             with store.get_conn() as conn:
                 conn.execute(text("SELECT 1")).fetchone()
+            knowledge.ping()
         except Exception as exc:
             raise AppError(503, f"数据库不可用: {exc}") from exc
         return {"status": "ready"}
 
     app.include_router(router)
     logger.info(
-        "database %s:%s/%s",
+        "mysql %s:%s/%s  postgres %s:%s/%s",
         settings.mysql_host,
         settings.mysql_port,
         settings.mysql_database,
+        settings.pg_host,
+        settings.pg_port,
+        settings.pg_database,
     )
     return app
 

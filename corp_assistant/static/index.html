@@ -138,6 +138,7 @@
         <textarea id="message" placeholder="例如：年假有几天？先查制度再回答。" required></textarea>
         <div class="row">
           <button id="send" type="submit">发送</button>
+          <span class="meta">回车发送，Shift+回车换行</span>
           <span class="meta" id="conv"></span>
         </div>
       </form>
@@ -352,6 +353,12 @@
       $("conv").textContent = "";
       $("log").replaceChildren();
       $("chatError").textContent = "";
+    });
+
+    $("message").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      $("chatForm").requestSubmit();
     });
 
     $("chatForm").addEventListener("submit", async (event) => {
