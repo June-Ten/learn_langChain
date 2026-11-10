@@ -17,7 +17,9 @@ from corp_assistant import knowledge, store
 from corp_assistant.logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
-INDEX_FILE = Path(__file__).resolve().parent / "static" / "index.html"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
+VUE_FILE = STATIC_DIR / "vue.global.prod.js"
 
 
 def create_app() -> FastAPI:
@@ -78,6 +80,10 @@ def create_app() -> FastAPI:
     @app.get("/")
     def index():
         return FileResponse(INDEX_FILE)
+
+    @app.get("/vue.global.prod.js")
+    def vue_runtime():
+        return FileResponse(VUE_FILE, media_type="text/javascript")
 
     @app.get("/health")
     def health():

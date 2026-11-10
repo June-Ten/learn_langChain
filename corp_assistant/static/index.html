@@ -19,6 +19,7 @@
       --shadow: 0 1px 0 rgba(29, 27, 23, 0.04);
     }
     * { box-sizing: border-box; }
+    [v-cloak] { display: none; }
     body {
       margin: 0;
       font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -87,7 +88,16 @@
     .bubble { max-width: 92%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; line-height: 1.5; }
     .bubble.user { align-self: flex-end; background: var(--user); }
     .bubble.assistant { align-self: flex-start; background: #f7f4ee; border: 1px solid var(--line); }
+    .reasoning {
+      max-height: 96px;
+      overflow: auto;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
     .tools { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .caret { color: var(--accent); }
     .error { color: var(--danger); font-size: 13px; min-height: 1.2em; }
     .hit, .ticket, .person {
       border-top: 1px solid var(--line);
@@ -96,7 +106,6 @@
     .hit h3, .ticket h3, .person strong { margin: 0 0 4px; font-size: 14px; }
     .meta { color: var(--muted); font-size: 12px; }
     .stack { display: grid; gap: 8px; }
-    .hidden { display: none; }
     @media (max-width: 860px) {
       header, .who { align-items: stretch; }
       header { flex-direction: column; }
@@ -106,341 +115,395 @@
   </style>
 </head>
 <body>
-  <header>
-    <div>
-      <h1>星澜内部助手</h1>
-      <p class="sub" id="identity">正在确认身份…</p>
-    </div>
-    <div class="who">
-      <label>API Key
-        <input id="apiKey" value="dev-key" autocomplete="off">
-      </label>
-      <label>当前员工
-        <select id="userId">
-          <option value="E004" selected>E004 赵敏 · IT 员工</option>
-          <option value="E003">E003 张伟 · 财务员工</option>
-          <option value="E005">E005 陈静 · 财务主管</option>
-          <option value="E002">E002 王芳 · 人力主管</option>
-          <option value="E001">E001 李明 · 管理员</option>
-        </select>
-      </label>
-    </div>
-  </header>
-  <main>
-    <section class="pad">
-      <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
-        <strong>对话</strong>
-        <button class="ghost" id="newChat" type="button">新对话</button>
+  <div id="app" v-cloak>
+    <header>
+      <div>
+        <h1>星澜内部助手</h1>
+        <p class="sub">{{ identity }}</p>
       </div>
-      <div class="log" id="log"></div>
-      <p class="error" id="chatError"></p>
-      <form id="chatForm" class="stack">
-        <textarea id="message" placeholder="例如：年假有几天？先查制度再回答。" required></textarea>
-        <div class="row">
-          <button id="send" type="submit">发送</button>
-          <span class="meta">回车发送，Shift+回车换行</span>
-          <span class="meta" id="conv"></span>
+      <div class="who">
+        <label>API Key
+          <input v-model="apiKey" autocomplete="off" @change="onIdentityChange">
+        </label>
+        <label>当前员工
+          <select v-model="userId" @change="onIdentityChange">
+            <option v-for="person in staff" :key="person.id" :value="person.id">{{ person.label }}</option>
+          </select>
+        </label>
+      </div>
+    </header>
+    <main>
+      <section class="pad">
+        <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+          <strong>对话</strong>
+          <button class="ghost" type="button" @click="newChat">新对话</button>
         </div>
-      </form>
-    </section>
-    <section class="pad">
-      <div class="tabs">
-        <button type="button" class="active" data-tab="knowledge">制度</button>
-        <button type="button" data-tab="tickets">工单</button>
-        <button type="button" data-tab="people">同事</button>
-      </div>
-      <div id="knowledge">
-        <form id="searchForm" class="row">
-          <input id="query" placeholder="年假、报销、VPN" required>
-          <button type="submit">检索</button>
-        </form>
-        <p class="error" id="searchError"></p>
-        <div id="hits"></div>
-      </div>
-      <div id="tickets" class="hidden">
-        <form id="ticketForm" class="stack">
-          <input id="title" placeholder="标题" required maxlength="80">
-          <textarea id="description" placeholder="说明" required></textarea>
+        <div class="log" ref="logEl">
+          <div v-for="(item, index) in messages" :key="index" class="bubble" :class="item.role">
+            <div v-if="item.reasoning" class="reasoning">{{ item.reasoning }}</div>
+            <span>{{ item.content }}</span><span v-if="item.pending" class="caret">▍</span>
+            <div v-if="item.pending && !item.content" class="tools">{{ item.tools.length ? "正在调用 " + item.tools.join("、") : "正在生成…" }}</div>
+            <div v-else-if="item.tools.length" class="tools">调用了 {{ item.tools.join("、") }}</div>
+          </div>
+        </div>
+        <p class="error">{{ chatError }}</p>
+        <form class="stack" @submit.prevent="send">
+          <textarea
+            v-model="draft"
+            placeholder="例如：年假有几天？先查制度再回答。"
+            required
+            @keydown="onMessageKeydown"
+          ></textarea>
           <div class="row">
-            <select id="category">
-              <option value="it">IT</option>
-              <option value="hr">人事</option>
-              <option value="finance">财务</option>
-              <option value="other">其他</option>
-            </select>
-            <select id="priority">
-              <option value="low">低</option>
-              <option value="medium" selected>中</option>
-              <option value="high">高</option>
-            </select>
-            <button type="submit">提交</button>
+            <button type="submit" :disabled="sending">发送</button>
+            <span class="meta">回车发送，Shift+回车换行</span>
+            <span class="meta" v-if="conversationId">会话 {{ conversationId.slice(0, 8) }}</span>
           </div>
         </form>
-        <p class="error" id="ticketError"></p>
-        <div id="ticketList"></div>
-      </div>
-      <div id="people" class="hidden">
-        <form id="peopleForm" class="row">
-          <input id="personQuery" placeholder="姓名或工号">
-          <button type="submit">查找</button>
-        </form>
-        <p class="error" id="peopleError"></p>
-        <div id="personList"></div>
-      </div>
-    </section>
-  </main>
+      </section>
+      <section class="pad">
+        <div class="tabs">
+          <button type="button" :class="{ active: tab === 'knowledge' }" @click="showTab('knowledge')">制度</button>
+          <button type="button" :class="{ active: tab === 'tickets' }" @click="showTab('tickets')">工单</button>
+          <button type="button" :class="{ active: tab === 'people' }" @click="showTab('people')">同事</button>
+        </div>
+        <div v-show="tab === 'knowledge'">
+          <form class="row" @submit.prevent="searchKnowledge">
+            <input v-model="query" placeholder="年假、报销、VPN" required>
+            <button type="submit">检索</button>
+          </form>
+          <p class="error">{{ searchError }}</p>
+          <p v-if="searched && !hits.length" class="meta">没有命中。</p>
+          <article v-for="hit in hits" :key="hit.source + hit.title" class="hit">
+            <h3>{{ hit.title }}</h3>
+            <div class="meta">{{ hit.source }} · 分数 {{ hit.score }}</div>
+            <div>{{ hit.content }}</div>
+          </article>
+        </div>
+        <div v-show="tab === 'tickets'">
+          <form class="stack" @submit.prevent="createTicket">
+            <input v-model="ticketTitle" placeholder="标题" required maxlength="80">
+            <textarea v-model="ticketDescription" placeholder="说明" required></textarea>
+            <div class="row">
+              <select v-model="ticketCategory">
+                <option value="it">IT</option>
+                <option value="hr">人事</option>
+                <option value="finance">财务</option>
+                <option value="other">其他</option>
+              </select>
+              <select v-model="ticketPriority">
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+              <button type="submit">提交</button>
+            </div>
+          </form>
+          <p class="error">{{ ticketError }}</p>
+          <p v-if="ticketsLoaded && !tickets.length" class="meta">当前身份下没有工单。</p>
+          <article v-for="ticket in tickets" :key="ticket.id" class="ticket">
+            <h3>#{{ ticket.id }} {{ ticket.title }}</h3>
+            <div class="meta">{{ ticket.status }} · {{ ticket.category }}/{{ ticket.priority }} · {{ ticket.requester_name }}</div>
+            <select
+              v-if="role === 'manager' || role === 'admin'"
+              :value="ticket.status"
+              @change="updateTicket(ticket, $event.target.value)"
+            >
+              <option value="open">open</option>
+              <option value="in_progress">in_progress</option>
+              <option value="resolved">resolved</option>
+            </select>
+          </article>
+        </div>
+        <div v-show="tab === 'people'">
+          <form class="row" @submit.prevent="refreshPeople">
+            <input v-model="personQuery" placeholder="姓名或工号">
+            <button type="submit">查找</button>
+          </form>
+          <p class="error">{{ peopleError }}</p>
+          <article v-for="person in people" :key="person.id" class="person">
+            <strong>{{ person.id }} {{ person.name }}</strong>
+            <div class="meta">{{ person.department }} · {{ person.title }} · {{ person.role }}</div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/vue.global.prod.js"></script>
   <script>
-    const $ = (id) => document.getElementById(id);
-    let conversationId = "";
-    let role = "employee";
+    const { createApp, ref, reactive, nextTick, onMounted } = Vue;
 
-    function saveIdentity() {
-      localStorage.setItem("corp_api_key", $("apiKey").value.trim());
-      localStorage.setItem("corp_user_id", $("userId").value);
-    }
+    createApp({
+      setup() {
+        const staff = [
+          { id: "E004", label: "E004 赵敏 · IT 员工" },
+          { id: "E003", label: "E003 张伟 · 财务员工" },
+          { id: "E005", label: "E005 陈静 · 财务主管" },
+          { id: "E002", label: "E002 王芳 · 人力主管" },
+          { id: "E001", label: "E001 李明 · 管理员" },
+        ];
+        const apiKey = ref(localStorage.getItem("corp_api_key") || "dev-key");
+        const userId = ref(localStorage.getItem("corp_user_id") || "E004");
+        const identity = ref("正在确认身份…");
+        const role = ref("employee");
+        const conversationId = ref("");
+        const messages = ref([]);
+        const draft = ref("");
+        const sending = ref(false);
+        const chatError = ref("");
+        const logEl = ref(null);
+        const tab = ref("knowledge");
+        const query = ref("");
+        const hits = ref([]);
+        const searched = ref(false);
+        const searchError = ref("");
+        const ticketTitle = ref("");
+        const ticketDescription = ref("");
+        const ticketCategory = ref("it");
+        const ticketPriority = ref("medium");
+        const tickets = ref([]);
+        const ticketsLoaded = ref(false);
+        const ticketError = ref("");
+        const personQuery = ref("");
+        const people = ref([]);
+        const peopleError = ref("");
 
-    function loadIdentity() {
-      const key = localStorage.getItem("corp_api_key");
-      const user = localStorage.getItem("corp_user_id");
-      if (key) $("apiKey").value = key;
-      if (user) $("userId").value = user;
-    }
-
-    async function api(path, options = {}) {
-      const response = await fetch(path, {
-        method: options.method || "GET",
-        headers: {
-          "X-API-Key": $("apiKey").value.trim(),
-          "X-User-Id": $("userId").value,
-          ...(options.body ? { "Content-Type": "application/json" } : {}),
-        },
-        body: options.body ? JSON.stringify(options.body) : undefined,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const detail = typeof data.detail === "string" ? data.detail : "请求失败";
-        throw new Error(detail);
-      }
-      return data;
-    }
-
-    function appendBubble(kind, text, tools) {
-      const node = document.createElement("div");
-      node.className = "bubble " + kind;
-      node.textContent = text;
-      if (tools && tools.length) {
-        const meta = document.createElement("div");
-        meta.className = "tools";
-        meta.textContent = "调用了 " + tools.map((item) => item.name).join("、");
-        node.appendChild(meta);
-      }
-      $("log").appendChild(node);
-      $("log").scrollTop = $("log").scrollHeight;
-    }
-
-    async function refreshMe() {
-      saveIdentity();
-      try {
-        const me = await api("/api/v1/me");
-        role = me.role;
-        $("identity").textContent = me.name + " · " + me.department + " · " + me.title + " · " + me.role;
-      } catch (error) {
-        role = "employee";
-        $("identity").textContent = error.message;
-      }
-    }
-
-    async function refreshTickets() {
-      $("ticketError").textContent = "";
-      try {
-        const page = await api("/api/v1/tickets");
-        const box = $("ticketList");
-        box.replaceChildren();
-        if (!page.items.length) {
-          box.textContent = "当前身份下没有工单。";
-          return;
+        function saveIdentity() {
+          localStorage.setItem("corp_api_key", apiKey.value.trim());
+          localStorage.setItem("corp_user_id", userId.value);
         }
-        for (const ticket of page.items) {
-          const card = document.createElement("article");
-          card.className = "ticket";
-          const title = document.createElement("h3");
-          title.textContent = "#" + ticket.id + " " + ticket.title;
-          const meta = document.createElement("div");
-          meta.className = "meta";
-          meta.textContent = ticket.status + " · " + ticket.category + "/" + ticket.priority + " · " + ticket.requester_name;
-          card.append(title, meta);
-          if (role === "manager" || role === "admin") {
-            const select = document.createElement("select");
-            for (const status of ["open", "in_progress", "resolved"]) {
-              const option = document.createElement("option");
-              option.value = status;
-              option.textContent = status;
-              option.selected = status === ticket.status;
-              select.appendChild(option);
-            }
-            select.addEventListener("change", async () => {
-              try {
-                await api("/api/v1/tickets/" + ticket.id, {
-                  method: "PATCH",
-                  body: { status: select.value },
-                });
-                await refreshTickets();
-              } catch (error) {
-                $("ticketError").textContent = error.message;
-              }
-            });
-            card.appendChild(select);
+
+        async function api(path, options = {}) {
+          const response = await fetch(path, {
+            method: options.method || "GET",
+            headers: {
+              "X-API-Key": apiKey.value.trim(),
+              "X-User-Id": userId.value,
+              ...(options.body ? { "Content-Type": "application/json" } : {}),
+            },
+            body: options.body ? JSON.stringify(options.body) : undefined,
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const detail = typeof data.detail === "string" ? data.detail : "请求失败";
+            throw new Error(detail);
           }
-          box.appendChild(card);
+          return data;
         }
-      } catch (error) {
-        $("ticketError").textContent = error.message;
-      }
-    }
 
-    async function refreshPeople(query) {
-      $("peopleError").textContent = "";
-      try {
-        const page = await api("/api/v1/employees?q=" + encodeURIComponent(query || ""));
-        const box = $("personList");
-        box.replaceChildren();
-        for (const person of page.items) {
-          const card = document.createElement("article");
-          card.className = "person";
-          const name = document.createElement("strong");
-          name.textContent = person.id + " " + person.name;
-          const meta = document.createElement("div");
-          meta.className = "meta";
-          meta.textContent = person.department + " · " + person.title + " · " + person.role;
-          card.append(name, meta);
-          box.appendChild(card);
+        async function scrollLog() {
+          await nextTick();
+          if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
         }
-      } catch (error) {
-        $("peopleError").textContent = error.message;
-      }
-    }
 
-    $("apiKey").addEventListener("change", async () => {
-      conversationId = "";
-      $("conv").textContent = "";
-      $("log").replaceChildren();
-      await refreshMe();
-      await refreshTickets();
-    });
-    $("userId").addEventListener("change", async () => {
-      conversationId = "";
-      $("conv").textContent = "";
-      $("log").replaceChildren();
-      await refreshMe();
-      await refreshTickets();
-      await refreshPeople($("personQuery").value.trim());
-    });
-
-    document.querySelectorAll(".tabs button").forEach((button) => {
-      button.addEventListener("click", () => {
-        document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
-        button.classList.add("active");
-        for (const name of ["knowledge", "tickets", "people"]) {
-          $(name).classList.toggle("hidden", name !== button.dataset.tab);
+        function resetChat() {
+          conversationId.value = "";
+          messages.value = [];
+          chatError.value = "";
         }
-        if (button.dataset.tab === "tickets") refreshTickets();
-        if (button.dataset.tab === "people") refreshPeople($("personQuery").value.trim());
-      });
-    });
 
-    $("newChat").addEventListener("click", () => {
-      conversationId = "";
-      $("conv").textContent = "";
-      $("log").replaceChildren();
-      $("chatError").textContent = "";
-    });
+        async function refreshMe() {
+          saveIdentity();
+          try {
+            const me = await api("/api/v1/me");
+            role.value = me.role;
+            identity.value = me.name + " · " + me.department + " · " + me.title + " · " + me.role;
+          } catch (error) {
+            role.value = "employee";
+            identity.value = error.message;
+          }
+        }
 
-    $("message").addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
-      event.preventDefault();
-      $("chatForm").requestSubmit();
-    });
+        async function refreshTickets() {
+          ticketError.value = "";
+          try {
+            const page = await api("/api/v1/tickets");
+            tickets.value = page.items;
+            ticketsLoaded.value = true;
+          } catch (error) {
+            ticketError.value = error.message;
+          }
+        }
 
-    $("chatForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const message = $("message").value.trim();
-      if (!message) return;
-      $("chatError").textContent = "";
-      $("send").disabled = true;
-      appendBubble("user", message);
-      $("message").value = "";
-      try {
-        const result = await api("/api/v1/chat", {
-          method: "POST",
-          body: { message, conversation_id: conversationId || null },
+        async function refreshPeople() {
+          peopleError.value = "";
+          try {
+            const page = await api("/api/v1/employees?q=" + encodeURIComponent(personQuery.value.trim()));
+            people.value = page.items;
+          } catch (error) {
+            peopleError.value = error.message;
+          }
+        }
+
+        async function onIdentityChange() {
+          resetChat();
+          await refreshMe();
+          await refreshTickets();
+          if (tab.value === "people") await refreshPeople();
+        }
+
+        function showTab(name) {
+          tab.value = name;
+          if (name === "tickets") refreshTickets();
+          if (name === "people") refreshPeople();
+        }
+
+        function newChat() {
+          resetChat();
+        }
+
+        function onMessageKeydown(event) {
+          if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          send();
+        }
+
+        function parseSse(block) {
+          let eventName = "message";
+          const dataLines = [];
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event:")) eventName = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+          }
+          if (!dataLines.length) return null;
+          return { event: eventName, data: JSON.parse(dataLines.join("\n")) };
+        }
+
+        function applyChatEvent(assistant, parsed) {
+          const data = parsed.data;
+          if (parsed.event === "meta" || parsed.event === "done") {
+            conversationId.value = data.conversation_id || conversationId.value;
+          }
+          if (parsed.event === "reasoning") assistant.reasoning += data.text || "";
+          if (parsed.event === "delta") assistant.content += data.text || "";
+          if (parsed.event === "tool" && data.name) assistant.tools.push(data.name);
+          if (parsed.event === "done") {
+            assistant.content = data.answer || assistant.content;
+            assistant.tools = (data.tools || []).map((item) => item.name);
+          }
+          if (parsed.event === "error") throw new Error(data.detail || "请求失败");
+        }
+
+        async function send() {
+          const message = draft.value.trim();
+          if (!message || sending.value) return;
+          chatError.value = "";
+          sending.value = true;
+          messages.value.push({ role: "user", content: message, tools: [], reasoning: "", pending: false });
+          draft.value = "";
+          const assistant = reactive({ role: "assistant", content: "", tools: [], reasoning: "", pending: true });
+          messages.value.push(assistant);
+          await scrollLog();
+          try {
+            const response = await fetch("/api/v1/chat", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "X-API-Key": apiKey.value.trim(),
+                "X-User-Id": userId.value,
+              },
+              body: JSON.stringify({
+                message,
+                conversation_id: conversationId.value || null,
+              }),
+            });
+            if (!response.ok || !response.body) {
+              const data = await response.json().catch(() => ({}));
+              const detail = typeof data.detail === "string" ? data.detail : "请求失败";
+              throw new Error(detail);
+            }
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const blocks = buffer.split("\n\n");
+              buffer = blocks.pop() || "";
+              for (const block of blocks) {
+                const parsed = parseSse(block);
+                if (!parsed) continue;
+                applyChatEvent(assistant, parsed);
+                await scrollLog();
+              }
+            }
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              const parsed = parseSse(buffer);
+              if (parsed) applyChatEvent(assistant, parsed);
+            }
+          } catch (error) {
+            if (!assistant.content && !assistant.reasoning) {
+              messages.value = messages.value.filter((item) => item !== assistant);
+            }
+            chatError.value = error.message;
+          } finally {
+            assistant.pending = false;
+            sending.value = false;
+            await scrollLog();
+          }
+        }
+
+        async function searchKnowledge() {
+          searchError.value = "";
+          searched.value = true;
+          try {
+            const page = await api("/api/v1/knowledge/search?q=" + encodeURIComponent(query.value.trim()));
+            hits.value = page.items;
+          } catch (error) {
+            hits.value = [];
+            searchError.value = error.message;
+          }
+        }
+
+        async function createTicket() {
+          ticketError.value = "";
+          try {
+            await api("/api/v1/tickets", {
+              method: "POST",
+              body: {
+                title: ticketTitle.value.trim(),
+                description: ticketDescription.value.trim(),
+                category: ticketCategory.value,
+                priority: ticketPriority.value,
+              },
+            });
+            ticketTitle.value = "";
+            ticketDescription.value = "";
+            ticketCategory.value = "it";
+            ticketPriority.value = "medium";
+            await refreshTickets();
+          } catch (error) {
+            ticketError.value = error.message;
+          }
+        }
+
+        async function updateTicket(ticket, status) {
+          try {
+            await api("/api/v1/tickets/" + ticket.id, {
+              method: "PATCH",
+              body: { status },
+            });
+            await refreshTickets();
+          } catch (error) {
+            ticketError.value = error.message;
+          }
+        }
+
+        onMounted(() => {
+          refreshMe();
         });
-        conversationId = result.conversation_id;
-        $("conv").textContent = "会话 " + conversationId.slice(0, 8);
-        appendBubble("assistant", result.answer, result.tools);
-      } catch (error) {
-        $("chatError").textContent = error.message;
-      } finally {
-        $("send").disabled = false;
-      }
-    });
 
-    $("searchForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      $("searchError").textContent = "";
-      try {
-        const page = await api("/api/v1/knowledge/search?q=" + encodeURIComponent($("query").value.trim()));
-        const box = $("hits");
-        box.replaceChildren();
-        if (!page.items.length) {
-          box.textContent = "没有命中。";
-          return;
-        }
-        for (const hit of page.items) {
-          const card = document.createElement("article");
-          card.className = "hit";
-          const title = document.createElement("h3");
-          title.textContent = hit.title;
-          const meta = document.createElement("div");
-          meta.className = "meta";
-          meta.textContent = hit.source + " · 分数 " + hit.score;
-          const body = document.createElement("div");
-          body.textContent = hit.content;
-          card.append(title, meta, body);
-          box.appendChild(card);
-        }
-      } catch (error) {
-        $("searchError").textContent = error.message;
-      }
-    });
-
-    $("ticketForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      $("ticketError").textContent = "";
-      try {
-        await api("/api/v1/tickets", {
-          method: "POST",
-          body: {
-            title: $("title").value.trim(),
-            description: $("description").value.trim(),
-            category: $("category").value,
-            priority: $("priority").value,
-          },
-        });
-        $("ticketForm").reset();
-        $("priority").value = "medium";
-        await refreshTickets();
-      } catch (error) {
-        $("ticketError").textContent = error.message;
-      }
-    });
-
-    $("peopleForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      await refreshPeople($("personQuery").value.trim());
-    });
-
-    loadIdentity();
-    refreshMe();
+        return {
+          staff, apiKey, userId, identity, role, conversationId, messages, draft, sending, chatError, logEl,
+          tab, query, hits, searched, searchError, ticketTitle, ticketDescription, ticketCategory, ticketPriority,
+          tickets, ticketsLoaded, ticketError, personQuery, people, peopleError,
+          onIdentityChange, showTab, newChat, onMessageKeydown, send, searchKnowledge, createTicket, updateTicket, refreshPeople,
+        };
+      },
+    }).mount("#app");
   </script>
 </body>
 </html>

@@ -1,11 +1,14 @@
+import asyncio
+import threading
+
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 
 from corp_assistant import assistant, knowledge, store
 from corp_assistant.auth import current_user, require_admin
 from corp_assistant.schemas import (
     AuditOut,
     ChatIn,
-    ChatOut,
     ConversationOut,
     EmployeeOut,
     KnowledgeDoc,
@@ -106,10 +109,43 @@ def suggest_ticket(body: SuggestIn, user: dict = Depends(current_user)):
     del user
     return assistant.suggest_ticket(body.text)
 
-# 聊天接口 ai助手
-@router.post("/chat", response_model=ChatOut)
+@router.post("/chat")
 def chat(body: ChatIn, user: dict = Depends(current_user)):
-    return assistant.chat(user, body.message, body.conversation_id)
+    """流式对话。响应是 SSE：meta、reasoning、delta、tool、done、error。"""
+    conversation_id, history = assistant.open_turn(user, body.message, body.conversation_id)
+    agent = assistant.build_agent(user)
+
+    async def generate():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def produce():
+            try:
+                for event in assistant.iter_chat_events(
+                    user, body.message, conversation_id, history, agent
+                ):
+                    asyncio.run_coroutine_threadsafe(queue.put(event), loop).result()
+            except Exception as exc:
+                asyncio.run_coroutine_threadsafe(
+                    queue.put({"event": "error", "detail": f"模型调用失败: {exc}"}),
+                    loop,
+                ).result()
+            finally:
+                asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+
+        threading.Thread(target=produce, daemon=True).start()
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            name = event.pop("event")
+            yield assistant.encode_sse(name, event)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/conversations", response_model=Page[ConversationOut])
